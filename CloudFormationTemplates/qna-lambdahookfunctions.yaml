@@ -1,0 +1,207 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: SMS chatbot multilingual campaign -- Lambda function to take QnA bot and send it to Amazon connect for call me back function.
+Parameters:
+  contactflowArn:
+    Type: String 
+    Description: The Contact Flow ARN from Amazon Connect
+  connectphonenumber:
+    Type: String 
+    Description: The Phone number for outbound call in Amazon Connect in E.164 format, e.g. +18665554444
+  PinpointProjectId:
+    Type: String
+    Description: Amazon Pinpoint Project ID if one already exists, blank to create one
+
+Resources:
+  LambdaHookConnectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:  
+      - PolicyName: LambdaHookConnectPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - connect:StartOutboundVoiceContact
+                - logs:CreateLogStream
+                - logs:CreateLogGroup
+                - logs:PutLogEvents
+                - mobiletargeting:*
+              Resource: "*"
+  LambdaHookConnect:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python3.6
+      Description: Lambda function to take QnA bot and send it to Amazon connect for call me back function.
+      Role: !GetAtt LambdaHookConnectRole.Arn
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          Region: !Ref AWS::Region
+          ContactFlowARN: !Ref contactflowArn
+          ConnectPhoneNumber: !Ref connectphonenumber
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          import os
+          def lambda_handler(event, context):
+              if ("userPreferredLocale" in event["res"]["session"]):
+                  lang = event["res"]["session"]["userPreferredLocale"]
+              elif ("userLocale" in event["res"]["session"]):
+                  lang = event["res"]["session"]["userLocale"]
+              else:
+                  lang = 'en'
+              AWS_connect_phone_number = os.environ['ConnectPhoneNumber']
+              AWS_connect_contact_flow_arn = os.environ['ContactFlowARN']
+              contactflowInfo = AWS_connect_contact_flow_arn.split(':')[-1]
+              AWS_connect_instance_id = contactflowInfo.split('/')[1]
+              AWS_connect_contact_flow_id = contactflowInfo.split('/')[-1]
+
+              client = boto3.client('connect', region_name=os.environ['Region'])
+              QnaBot_contact_phone_number = event["res"]["_userInfo"]["UserId"]
+              QnaBot_contact_phone_number.replace(" ","")
+              QnaBot_contact_phone_number.replace("-","")
+              QnaBot_contact_phone_number.replace("+","")
+              QnaBot_contact_phone_number = "+1" + QnaBot_contact_phone_number
+              logger.info("Will attempt to call: " + QnaBot_contact_phone_number)
+              try:
+                  response = client.start_outbound_voice_contact (
+                      DestinationPhoneNumber = QnaBot_contact_phone_number,
+                      ContactFlowId = AWS_connect_contact_flow_id, 
+                      InstanceId = AWS_connect_instance_id,
+                      SourcePhoneNumber = AWS_connect_phone_number,
+                      Attributes={
+                          'userPreferredLocale': lang
+                      }
+                  )
+                  logger.info(response)
+                  return event
+              except Exception as e:
+                  logger.info(e)
+                  event['res']['message'] = "Hmmm. I had a problem calling you. Sorry about that."
+                  return event
+  PinpointCampaignOptIn:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: a lambda function that enroll pinpoint campaign for a given endpoint
+      Role: !GetAtt LambdaHookConnectRole.Arn
+      Handler: index.handler
+      Runtime: nodejs12.x
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          region: !Sub ${AWS::Region}
+          PinpointProjectId: !Ref PinpointProjectId
+      Code:
+        ZipFile: |
+          var AWS = require('aws-sdk');
+          var pinpoint = new AWS.Pinpoint({region: process.env.region}); 
+          var PinpointProjectId = process.env.PinpointProjectId;
+          exports.handler = (event, context, callback) => {
+            if (event.hasOwnProperty('res') && event.res.hasOwnProperty('_userInfo') && event.res._userInfo.hasOwnProperty('UserId')) {
+              var endpointId = '1'+ event.res._userInfo.UserId;
+              var date = new Date();
+              var params = {
+                ApplicationId: PinpointProjectId,
+                EndpointId: endpointId,
+                EndpointRequest: { 
+                  Address: endpointId,
+                  ChannelType: 'SMS',
+                  OptOut: 'NONE',
+                  Attributes: {
+                    OptInTimestamp: [
+                      date.toString()
+                    ]
+                  },
+                }
+              };
+              pinpoint.updateEndpoint(params, function(err, data) {
+                if (err) {
+                  console.log("An error occurred.\n");
+                  console.log(err, err.stack);
+                  callback(err, event);
+                }
+                else {
+                  console.log("Successfully changed the opt status of endpoint ID " + endpointId);
+                  callback(null, event);
+                }
+              });
+            }
+          }
+  PinpointCampaignOptOut:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: a lambda function that cancel pinpoint campaign for a given endpoint
+      Role: !GetAtt LambdaHookConnectRole.Arn
+      Handler: index.handler
+      Runtime: nodejs12.x
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          region: !Sub ${AWS::Region}
+          PinpointProjectId: !Ref PinpointProjectId
+      Code:
+        ZipFile: |
+          var AWS = require('aws-sdk');
+          var pinpoint = new AWS.Pinpoint({region: process.env.region}); 
+          var PinpointProjectId = process.env.PinpointProjectId;
+          exports.handler = (event, context, callback) => {
+            if (event.hasOwnProperty('res') && event.res.hasOwnProperty('_userInfo') && event.res._userInfo.hasOwnProperty('UserId')) {
+              var endpointId = '1'+ event.res._userInfo.UserId;
+              var date = new Date();
+              var params = {
+                ApplicationId: PinpointProjectId,
+                EndpointId: endpointId,
+                EndpointRequest: { 
+                  Address: endpointId,
+                  ChannelType: 'SMS',
+                  OptOut: 'ALL',
+                  Attributes: {
+                    OptOutTimestamp: [
+                      date.toString()
+                    ]
+                  },
+                }
+              };
+              pinpoint.updateEndpoint(params, function(err, data) {
+                if (err) {
+                  console.log("An error occurred.\n");
+                  console.log(err, err.stack);
+                  callback(err, event);
+                }
+                else {
+                  console.log("Successfully changed the opt status of endpoint ID " + endpointId);
+                  callback(null, event);
+                }
+              });
+            }
+          }
+
+Outputs:
+  PinpointCampaignOptIn:
+    Description: Lambda function to opt in pinpoint campaign
+    Value: !GetAtt PinpointCampaignOptIn.Arn
+  PinpointCampaignOptOut:
+    Description: a lambda function to opt out pinpoint campaign
+    Value: !GetAtt PinpointCampaignOptOut.Arn
+  LambdaHookConnect:
+    Description: Lambda function to take QnA bot and send it to Amazon connect for call me back function.
+    Value: !GetAtt LambdaHookConnect.Arn

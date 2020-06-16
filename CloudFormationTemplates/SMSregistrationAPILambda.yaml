@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SMS chatbot multilingual campaign -- Registration Stack includes a REST API, lambda function and associated IAM roles and permissions
+Parameters:
+  RESTAPIStageName:
+    Type: "String"
+    Description: The deployment stage name of REST API. It will be part of the invoke URL in output
+    AllowedPattern: "^[a-z0-9]+$"
+    Default: "call"
+  originationNumber:
+    Type: String 
+    Description: Pinpoint claimed phone number for SMS in E.164 format, e.g. +18665554444
+  PinpointProjectId:
+    Type: String
+    Description: Amazon Pinpoint Project ID.
+  ConfirmMessage:
+    Type: String
+    Default: Thank you for enrolling SMS campaign. We send messages every day for next 14 days. No purchase req'd. Msg&data rates may apply. Please reply 'ready' or 'r' when you are ready for our SMS check-in.
+    Description: This is the confirmation SMS message user will receive after campaign manager enroll the phone number
+
+Resources:
+  SMSRegistrationRESTAPIServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SMSRegistrationRESTAPIServiceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SMSRegistrationRESTAPIServiceRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action: lambda:InvokeFunction
+                Resource: !GetAtt 'SMSRegistrationLambda.Arn'
+                Effect: Allow
+  SMSRegistrationRESTAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: REST API to register phone number into SMS connect checkin program
+      Name: SMSRegistrationRESTAPI
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+  SMSRegistrationAPIRootMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn : SMSRegistrationLambda
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !GetAtt SMSRegistrationRESTAPI.RootResourceId
+      RestApiId: !Ref SMSRegistrationRESTAPI
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations"
+          - lambdaArn: !GetAtt SMSRegistrationLambda.Arn
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true  
+  OptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !GetAtt SMSRegistrationRESTAPI.RootResourceId
+      RestApiId: !Ref SMSRegistrationRESTAPI
+      Integration:
+        IntegrationHttpMethod: OPTIONS
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: 'Empty'
+          ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: false
+              method.response.header.Access-Control-Allow-Methods: false
+              method.response.header.Access-Control-Allow-Origin: false 
+  SMSRegistrationAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - SMSRegistrationAPIRootMethod
+    Properties:
+      RestApiId: !Ref SMSRegistrationRESTAPI
+      StageName: !Ref RESTAPIStageName
+  SMSRegistrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt SMSRegistrationIAMRole.Arn
+      Handler: index.handler
+      Runtime: nodejs12.x
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          originationNumber: !Ref originationNumber
+          region: !Sub ${AWS::Region}
+          projectId: !Ref PinpointProjectId
+          ConfirmMessage: !Ref ConfirmMessage
+      Code:
+        ZipFile: |
+          var AWS = require('aws-sdk');
+          var pinpoint = new AWS.Pinpoint({region: process.env.region}); 
+          var translate = new AWS.Translate();
+          var projectId = process.env.projectId;
+          var onum = process.env.originationNumber;
+          var message = process.env.ConfirmMessage;
+          exports.handler = (event, context, callback) => {
+            console.log('Received event:', JSON.stringify(event));
+            var dat = JSON.parse(event.body);
+            if (dat.hasOwnProperty('destinationNumber')) {
+              var destinationNumber = dat.destinationNumber;
+              if (destinationNumber.length == 10) {
+                destinationNumber = "+1" + destinationNumber;
+              }
+              var fname = dat.hasOwnProperty('firstName') ? dat.firstName : '';
+              var lname = dat.hasOwnProperty('lastName') ? dat.lastName : '';
+              var lang = dat.hasOwnProperty('lang') ? dat.lang : '';
+            }
+            else {
+              callback(new Error('destinationNumber Not found'));
+            }
+            validateNumberCreateEndpoint(destinationNumber, fname, lname, lang);
+            callback(null, {
+              statusCode: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin" : "*", 
+                "Access-Control-Allow-Credentials" : true 
+              },
+              body: JSON.stringify({ "message": "Succeed!" })
+            });
+          };
+          function validateNumberCreateEndpoint(destinationNumber, fname, lname, lang) {
+            var params = {
+              NumberValidateRequest: {
+                IsoCountryCode: 'US',
+                PhoneNumber: destinationNumber
+              }
+            };
+            pinpoint.phoneNumberValidate(params, function(err, data) {
+              if (err) {
+                console.log(err, err.stack);
+              }
+              else {
+                if (data['NumberValidateResponse']['PhoneTypeCode'] == 0 || data['NumberValidateResponse']['PhoneTypeCode'] == 2) {
+                  createEndpoint(data, fname, lname, lang);
+                } else {
+                  console.log("Phone number validation failed.");
+                }
+              }
+            });
+          }
+          function createEndpoint(data, fname, lname, lang) {
+            var dnum = data['NumberValidateResponse']['CleansedPhoneNumberE164'];
+            var endpointId = data['NumberValidateResponse']['CleansedPhoneNumberE164'].substring(1);
+            var date = new Date();
+            var params = {
+              ApplicationId: projectId,
+              EndpointId: endpointId,
+              EndpointRequest: {
+                ChannelType: 'SMS',
+                Address: dnum,
+                OptOut: 'NONE',
+                Location: {
+                  PostalCode:data['NumberValidateResponse']['ZipCode'],
+                  City:data['NumberValidateResponse']['City'],
+                  Country:data['NumberValidateResponse']['CountryCodeIso2'],
+                },
+                Demographic: {
+                  Timezone:data['NumberValidateResponse']['Timezone']
+                },
+                Attributes: {
+                  OptInTimestamp: [
+                    date.toString()
+                  ]
+                },
+                User: {
+                  UserAttributes: {
+                    FirstName: [
+                      fname
+                    ],
+                    LastName: [
+                      lname
+                    ],
+                    Language: [
+                      lang
+                    ]
+                  }
+                }
+              }
+            };
+            pinpoint.updateEndpoint(params, function(err,data) {
+              if (err) {
+                console.log(err, err.stack);
+              }
+              else {
+                sendConfirmation(dnum, lang);
+              }
+            });
+          }
+          function sendConfirmation(destinationNumber, lang) {
+            var params1 = {
+              Text: message,
+              SourceLanguageCode: 'en',
+              TargetLanguageCode: lang
+            };
+            translate.translateText(params1, function(err, data) {
+                if (err) {
+                    console.log(err, err.stack);
+                    var translatedMsg = message;
+                }
+                else {
+                  var translatedMsg = data.TranslatedText;
+                  var params2 = {
+                    ApplicationId: projectId,
+                    MessageRequest: {
+                      Addresses: {
+                        [destinationNumber]: {
+                          ChannelType: 'SMS'
+                        }
+                      },
+                      MessageConfiguration: {
+                        SMSMessage: {
+                          Body: translatedMsg,
+                          MessageType: "TRANSACTIONAL",
+                          OriginationNumber: onum
+                        }
+                      }
+                    }
+                  };
+                  pinpoint.sendMessages(params2, function(err, data) {
+                    if(err) {
+                      console.log(err.message);
+                    } else {
+                      console.log("Message sent!");
+                    }
+                  });
+                }
+            });
+          }
+  SMSRegistrationIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SMSRegistrationIAMRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ''
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:  
+        - PolicyName: SMSRegistrationIAMPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLog
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Sid: PinpointSendMessage
+                Effect: Allow
+                Action: mobiletargeting:SendMessages
+                Resource: !Sub 'arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${PinpointProjectId}/*'
+              - Sid: PinpintEndpoint
+                Effect: Allow
+                Action: 
+                  - mobiletargeting:GetEndpoint
+                  - mobiletargeting:UpdateEndpoint
+                  - mobiletargeting:PutEvents
+                Resource: !Sub 'arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${PinpointProjectId}/endpoints/*'
+              - Sid: PinpointValidate
+                Effect: Allow
+                Action: mobiletargeting:PhoneNumberValidate
+                Resource: !Sub 'arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:phone/number/validate'
+              - Sid: Translate
+                Effect: Allow
+                Action: translate:TranslateText
+                Resource: '*'
+  RESTAPIInvokeLambda:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SMSRegistrationLambda
+      - SMSRegistrationRESTAPI
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SMSRegistrationLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SMSRegistrationRESTAPI}/*/POST/
+
+Outputs:
+  RestAPIInvokeUrl:
+    Description: Invoke URL of the REST API Deployment endpoint
+    Value: !Join 
+      - ''
+      - - 'https://'
+        - !Ref SMSRegistrationRESTAPI
+        - '.execute-api.'
+        - !Ref AWS::Region
+        - '.amazonaws.com/'
+        - !Ref RESTAPIStageName
+        - '/'
+  RegistrationLambdaURL:
+    Description: The URL of the lambda function to be triggered by REST API Deployment endpoint
+    Value: !Join 
+      - ''
+      - - 'https://'
+        - !Ref AWS::Region
+        - '.console.aws.amazon.com/lambda/home?region='
+        - !Ref AWS::Region
+        - '#/functions/'
+        - !Ref SMSRegistrationLambda

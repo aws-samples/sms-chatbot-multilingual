@@ -1,0 +1,221 @@
+﻿{
+  "qna": [
+    {
+      "args": [
+        ""
+      ],
+      "next": "",
+      "a": "Since we last messaged you, are you experiencing any symptom that concerns you? Reply YES or NO.",
+      "r": {
+        "buttons": [
+          {
+            "text": "",
+            "value": ""
+          }
+        ],
+        "subTitle": "",
+        "imageUrl": "",
+        "title": ""
+      },
+      "t": "",
+      "elicitResponse": {
+        "response_sessionattr_namespace": "covid.connect.symptom",
+        "responsebot_hook": "QNAYesNo"
+      },
+      "alt": {
+        "markdown": "",
+        "ssml": ""
+      },
+      "conditionalChaining": "(SessionAttributes.covid.connect.symptom.Yes_No == 'Yes' ) ? \"harder to breathe\" : \"wait until next checkin\"",
+      "l": "",
+      "qid": "covid.connect.1",
+      "type": "qna",
+      "selected": false,
+      "q": [
+        "ready",
+        "r",
+        "hello",
+        "hi"
+      ]
+    },
+    {
+      "args": [
+        ""
+      ],
+      "next": "",
+      "a": "Does it feel harder than usual to breathe? Reply YES or NO",
+      "r": {
+        "buttons": [
+          {
+            "text": "",
+            "value": ""
+          }
+        ],
+        "subTitle": "",
+        "imageUrl": "",
+        "title": "",
+        "text": "",
+        "url": ""
+      },
+      "t": "",
+      "elicitResponse": {
+        "response_sessionattr_namespace": "covid.connect.breathe",
+        "responsebot_hook": "QNAYesNo"
+      },
+      "alt": {
+        "markdown": "",
+        "ssml": ""
+      },
+      "conditionalChaining": "(SessionAttributes.covid.connect.symptom.Yes_No == 'Yes' || SessionAttributes.covid.connect.breathe.Yes_No == 'Yes' ) ? \"we will connect you soon\" : \"wait until next checkin\"",
+      "l": "",
+      "qid": "covid.checkin.2",
+      "type": "qna",
+      "q": [
+        "harder to breathe"
+      ]
+    },
+    {
+      "args": [
+        ""
+      ],
+      "next": "",
+      "a": "Thank you for your answer. You may reply HELP at any time if you develop any concerning symptoms before our next scheduled message.",
+      "r": {
+        "buttons": [
+          {
+            "text": "",
+            "value": ""
+          }
+        ],
+        "subTitle": "",
+        "imageUrl": "",
+        "title": "",
+        "text": "",
+        "url": ""
+      },
+      "t": "",
+      "elicitResponse": {
+        "response_sessionattr_namespace": "",
+        "responsebot_hook": ""
+      },
+      "alt": {
+        "markdown": "",
+        "ssml": ""
+      },
+      "conditionalChaining": "",
+      "l": "",
+      "qid": "covid.checkin.4",
+      "type": "qna",
+      "q": [
+        "wait until next checkin"
+      ]
+    },
+    {
+      "args": [],
+      "next": "",
+      "a": "Thank you! Our nursing team members will call you in just a moment. If this is an emergency, please call 911.\nIf you missed the call, please reach out us immediately at 888 888 8888",
+      "r": {
+        "buttons": [
+          {
+            "text": "",
+            "value": ""
+          }
+        ],
+        "subTitle": "",
+        "imageUrl": "",
+        "title": ""
+      },
+      "t": "",
+      "elicitResponse": {
+        "response_sessionattr_namespace": "",
+        "responsebot_hook": ""
+      },
+      "alt": {
+        "markdown": "Thank you! Our nursing team members will call you in just a moment. If this is an emergency, please call [911](tel:911).\nIf you missed the call, please reach out us immediately at [888 888 8888](tel: 888 888 8888)",
+        "ssml": ""
+      },
+      "conditionalChaining": "",
+      "l": "",
+      "qid": "covid.checkin.3",
+      "type": "qna",
+      "selected": false,
+      "q": [
+        "we will connect you soon"
+      ]
+    },
+    {
+      "args": [
+        ""
+      ],
+      "next": "",
+      "a": "Thank you very much to confirm your subscription.",
+      "r": {
+        "buttons": [
+          {
+            "text": "",
+            "value": ""
+          }
+        ],
+        "subTitle": "",
+        "imageUrl": "",
+        "title": "",
+        "text": "",
+        "url": ""
+      },
+      "t": "",
+      "elicitResponse": {
+        "response_sessionattr_namespace": "",
+        "responsebot_hook": ""
+      },
+      "alt": {
+        "markdown": "",
+        "ssml": ""
+      },
+      "conditionalChaining": "",
+      "l": "",
+      "qid": "covid.checkin.5",
+      "type": "qna",
+      "q": [
+        "enroll",
+        "join"
+      ]
+    },
+    {
+      "args": [
+        ""
+      ],
+      "next": "",
+      "a": "You are successfully opted out the program. Please reply 'JOIN' or 'CANCEL' to re-enroll the program.",
+      "r": {
+        "buttons": [
+          {
+            "text": "",
+            "value": ""
+          }
+        ],
+        "subTitle": "",
+        "imageUrl": "",
+        "title": "",
+        "text": "",
+        "url": ""
+      },
+      "t": "",
+      "elicitResponse": {
+        "response_sessionattr_namespace": "",
+        "responsebot_hook": ""
+      },
+      "alt": {
+        "markdown": "",
+        "ssml": ""
+      },
+      "conditionalChaining": "",
+      "l": "",
+      "qid": "covid.checkin.6",
+      "type": "qna",
+      "q": [
+        "stop",
+        "cancel"
+      ]
+    }
+  ]
+}

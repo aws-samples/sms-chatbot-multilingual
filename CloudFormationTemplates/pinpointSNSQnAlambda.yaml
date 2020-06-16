@@ -1,0 +1,241 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: SMS chatbot multilingual campaign -- Integrate Pinpoint project with QnA bot through SNS topic and Lambda function
+Parameters:
+  BotName:
+    Type: String 
+  BotAlias:
+    Type: String
+  PinpointProjectId:
+    Type: String
+    Description: Amazon Pinpoint Project ID if one already exists, blank to create one
+  StartWordsToCheck:
+    Type: String
+    Default: ready,r,hello,hi,enroll,join,stop,cancel
+    Description: An array (split by comma)of start words that will trigger the Lambda function to retrieve the language of Pinpoint endpoints and set userPreferredLocale in session attribute. Other input words will not do that.
+
+Resources:
+  PinpointSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: LexPinpointSMSIntegration
+      Subscription:
+        - Protocol: lambda
+          Endpoint: !GetAtt LexPinpointIntegrationFunction.Arn
+  PinpointSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref PinpointSNSTopic
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: allowSNSSourceAndLambdaTrigger
+        Statement:
+          - Sid: snstopicpolicyStatement1
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Condition:
+              ArnLike:
+                AWS:SourceArn: !Sub 'arn:aws:*:*:${AWS::AccountId}:*'
+            Action:
+              - sns:GetTopicAttributes
+              - sns:SetTopicAttributes
+              - sns:AddPermission
+              - sns:RemovePermission
+              - sns:DeleteTopic
+              - sns:Subscribe
+              - sns:ListSubscriptionsByTopic
+              - sns:Publish
+              - sns:Receive
+            Resource: !Ref PinpointSNSTopic
+          - Sid: snstopicpolicyStatement2
+            Effect: Allow
+            Principal:
+              Service: 
+                - mobile.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref PinpointSNSTopic
+  LexPinpointFunctionInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref LexPinpointIntegrationFunction
+      SourceArn: !Ref PinpointSNSTopic
+      Principal: sns.amazonaws.com 
+  LexPinpointIntegrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:  
+      - PolicyName: LexPinpointIntegrationRolePolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Sid: Log
+              Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:CreateLogGroup
+                - logs:PutLogEvents
+              Resource: arn:aws:logs:*:*:*
+            - Sid: Pinpoint
+              Effect: Allow
+              Action: 
+                - mobiletargeting:SendMessages
+                - mobiletargeting:GetEndpoint
+              Resource: 
+                !Sub 
+                  - 'arn:aws:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${ProjectId}*'
+                  - {ProjectId: !Ref PinpointProjectId}
+            - Sid: Lex
+              Effect: Allow
+              Action: 
+                - lex:PostContent
+                - lex:PostText
+              Resource: !Sub 'arn:aws:lex:${AWS::Region}:${AWS::AccountId}:bot:${BotName}:${BotAlias}'
+  LexPinpointIntegrationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: LexPinpointIntegration
+      Description: integrate lex chatbot with pinpoint sms channel.
+      Role: !GetAtt LexPinpointIntegrationRole.Arn
+      Handler: index.handler
+      Runtime: nodejs12.x
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          BotName: !Ref BotName
+          BotAlias: !Ref BotAlias
+          Region: !Sub ${AWS::Region}
+          PinpointApplicationId: !Ref PinpointProjectId
+          StartWords: !Ref StartWordsToCheck
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          AWS.config.update({region: process.env.Region});
+          const pinpoint = new AWS.Pinpoint();
+          const lex = new AWS.LexRuntime();
+          const docClient = new AWS.DynamoDB.DocumentClient();
+          var sqs = new AWS.SQS();
+          var AppId = process.env.PinpointApplicationId;
+          var BotName = process.env.BotName;
+          var BotAlias = process.env.BotAlias;
+          exports.handler = (event, context)  => {
+              var message = JSON.parse(event.Records[0].Sns.Message);
+              var customerPhoneNumber = message.originationNumber;
+              var chatbotPhoneNumber = message.destinationNumber;
+              var userMessage = message.messageBody.toLowerCase();
+              var userId = customerPhoneNumber.replace("+1", "");
+              const startWords = process.env.StartWords.split(",");
+              if (startWords.indexOf(userMessage) !== -1) {
+                 var params0 = {
+                     ApplicationId: AppId,
+                     EndpointId: '1'+userId
+                 };
+                 pinpoint.getEndpoint(params0, function(err, data) {
+                    if (err) {
+                      var lang = 'en';
+                      console.log(err, err.stack);
+                    } else {
+                         if (data.EndpointResponse.User.UserAttributes.hasOwnProperty('Language')) {
+                           var lang = data.EndpointResponse.User.UserAttributes.Language[0];
+                         } else {
+                           var lang = 'en';
+                         } 
+                     }
+                     var params = {
+                         botName: BotName,
+                         botAlias: BotAlias,
+                         inputText: userMessage,
+                         userId: userId,
+                         sessionAttributes: {
+                             "userPreferredLocale": lang
+                         }
+                     };
+                     var response = lex.postText(params, function (err, data) {
+                         if (err) {
+                             console.log(err, err.stack);
+                         }
+                         else if (data != null && data.message != null) {
+                             console.log("Lex response: " + data.message);
+                             sendResponse(customerPhoneNumber, chatbotPhoneNumber, response.response.data.message);
+                         }
+                         else {
+                             console.log("Lex did not send a message back!");
+                         }
+                     });
+                 });
+              } else {
+                 var params = {
+                      botName: BotName,
+                      botAlias: BotAlias,
+                      inputText: userMessage,
+                      userId: userId
+                  };
+                  var response = lex.postText(params, function (err, data) {
+                      if (err) {
+                          console.log(err, err.stack);
+                      }
+                      else if (data != null && data.message != null) {
+                          console.log("Lex response: " + data.message);
+                          sendResponse(customerPhoneNumber, chatbotPhoneNumber, response.response.data.message);
+                      }
+                      else {
+                          console.log("Lex did not send a message back!");
+                      }
+                  });
+              }
+          }
+          function sendResponse(custPhone, botPhone, response) {
+              var paramsSMS = {
+                   ApplicationId: AppId,
+                   MessageRequest: {
+                       Addresses: {
+                           [custPhone]: {
+                               ChannelType: 'SMS'
+                           }
+                       },
+                       MessageConfiguration: {
+                           SMSMessage: {
+                               Body: response,
+                               MessageType: "TRANSACTIONAL",
+                               OriginationNumber: botPhone
+                           }
+                       }
+                   }
+              };
+              pinpoint.sendMessages(paramsSMS, function (err, data) {
+                   if (err) {
+                       console.log("An error occurred.\n");
+                       console.log(err, err.stack);
+                   }
+                   else if (data['MessageResponse']['Result'][custPhone]['DeliveryStatus'] != "SUCCESSFUL") {
+                       console.log("Failed to send SMS response:");
+                       console.log(data['MessageResponse']['Result']);
+                   }
+                   else {
+                       console.log("Successfully sent response via SMS from " + botPhone + " to " + custPhone);
+                   }
+              });
+          }
+Outputs:
+  LexPinpointIntegrationFunction:
+    Description: "Lambda function to connect Pinpoint SMS to QnA bot"
+    Value: !Join 
+      - ''
+      - - 'https://'
+        - !Ref AWS::Region
+        - '.console.aws.amazon.com/lambda/home?region='
+        - !Ref AWS::Region
+        - '#/functions/'
+        - !Ref LexPinpointIntegrationFunction
