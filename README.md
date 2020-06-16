@@ -1,6 +1,6 @@
 ## Building Multilingual SMS Chatbot Campaign to Check-in COVID-19 Patients
 
-![Sample SMS conversation screenshot](misc/screenshot.pgn?raw=true)
+![Sample SMS conversation screenshot](Figures/screenshot.pgn?raw=true)
 
 See blog post for detailed discussion. 
 
@@ -8,7 +8,7 @@ See blog post for detailed discussion.
 
 The following architecture diagram demonstrated the AWS resources needed for this solution. 
 
-![Architecture Diagram](misc/architecture.jpg?raw=true)
+![Architecture Diagram](Figures/architecture.jpg?raw=true)
 
 The proposed solution has the following features:
 
