@@ -1,6 +1,6 @@
 ## Building Multilingual SMS Chatbot Campaign to Check-in COVID-19 Patients
 
-![Sample SMS conversation screenshot](Figures/screenshot.png =100x100)
+<img src="Figures/screenshot.png" width="200" height="200" />
 
 See blog post for detailed discussion. 
 
