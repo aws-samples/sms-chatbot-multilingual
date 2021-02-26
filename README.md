@@ -2,7 +2,7 @@
 
 <img src="Figures/screenshot.png" width="480" height="500" />
 
-See blog post for detailed discussion. 
+See [blog post](https://aws.amazon.com/blogs/industries/building-multilingual-sms-chatbot-campaigns-to-support-covid-19-patients-remotely/) for detailed discussion. 
 
 ### Architecture
 
