@@ -13,6 +13,12 @@ Parameters:
 Resources:
   PinpointStreamBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      BucketName: PinpointStreamBucket
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
   PinpointFirehoseESIAMRole:
     Type: AWS::IAM::Role
     DeletionPolicy: Delete
